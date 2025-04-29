@@ -21,6 +21,14 @@ class FolderService
         return DB::transaction(function () use ($data) {
             $parent = isset($data['parent_id']) ? $this->folderRepository->find($data['parent_id']) : null;
 
+            $existing = Folder::where('parent_id', $parent?->id)
+                ->where('name', $data['name'])
+                ->exists();
+
+            if ($existing) {
+                throw new \RuntimeException('Folder name already exists in this location');
+            }
+
             $data['segment'] = $this->getNextSegment($parent);
             $data['path'] = $this->generatePath($parent, $data['segment']);
 
@@ -29,16 +37,16 @@ class FolderService
     }
 
     private function getNextSegment(?Folder $parent): int
-{
-    return DB::transaction(function () use ($parent) {
-        $query = $parent 
-            ? Folder::where('parent_id', $parent->id)
-            : Folder::whereNull('parent_id');
+    {
+        return DB::transaction(function () use ($parent) {
+            $query = $parent
+                ? Folder::where('parent_id', $parent->id)
+                : Folder::whereNull('parent_id');
 
-        $maxSegment = $query->lockForUpdate()->max('segment');
-        return ($maxSegment ?? 0) + 1;
-    });
-}
+            $maxSegment = $query->lockForUpdate()->max('segment');
+            return ($maxSegment ?? 0) + 1;
+        });
+    }
 
     public function getAllFolders()
     {
@@ -76,15 +84,14 @@ class FolderService
     }
 
     private function updateDescendantsPaths(Folder $folder, string $oldPath): void
-{
-    $newPathPrefix = $folder->path . '.';
-    $oldPathPrefix = $oldPath . '.';
+    {
+        $descendants = Folder::where('path', 'like', "{$oldPath}.%")->get();
 
-    Folder::where('path', 'like', "{$oldPathPrefix}%")
-        ->update([
-            'path' => DB::raw("REPLACE(path, ?, ?)", [$oldPathPrefix, $newPathPrefix])
-        ]);
-}
+        foreach ($descendants as $descendant) {
+            $newPath = str_replace($oldPath, $folder->path, $descendant->path);
+            $descendant->update(['path' => $newPath]);
+        }
+    }
 
 
     private function validateParent(?Folder $newParent, Folder $folder): void
@@ -101,19 +108,23 @@ class FolderService
 
     private function generatePath(?Folder $parent, int $segment): string
     {
-        return $parent ? "{$parent->path}.{$segment}" : (string)$segment;
+        if (!$parent) {
+            return (string)$segment;
+        }
+
+        return $parent->path . '.' . $segment;
     }
     public function getFolderTree(): array
-{
-    return Folder::whereNull('parent_id')
-        ->with(['childrenRecursive' => function ($query) {
-            $query->with('childrenRecursive');
-        }])
-        ->get()
-        ->map(function ($folder) {
-            return $this->formatTree($folder);
-        })->toArray();
-}
+    {
+        return Folder::whereNull('parent_id')
+            ->with(['childrenRecursive' => function ($query) {
+                $query->orderBy('segment');
+            }])
+            ->get()
+            ->map(function ($folder) {
+                return $this->formatTree($folder);
+            })->toArray();
+    }
 
     private function formatTree(Folder $folder): array
     {

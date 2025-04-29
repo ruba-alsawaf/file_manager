@@ -15,8 +15,8 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->unsignedBigInteger('parent_id')->nullable();
-            $table->integer('segment'); 
-            $table->string('path'); 
+            $table->integer('segment')->null; 
+            $table->string('path')->null; 
             $table->timestamps();
     
             $table->foreign('parent_id')
